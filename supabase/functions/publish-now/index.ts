@@ -55,13 +55,17 @@ Deno.serve(async (req: Request) => {
     const supabase = adminClient();
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const nowIso = new Date().toISOString();
+    // Resgate: se uma execução anterior crashou/estourou o timeout no meio,
+    // posts ficam presos em "processing" — a query só busca "pending" e eles
+    // nunca mais seriam tentados. Processing parado há 10min volta à fila.
+    const staleIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
     const { data: due, error: dueError } = await supabase
       .from("scheduled_posts")
       .select("*")
-      .eq("status", "pending")
       .eq("publish_method", "api")
       .lte("scheduled_at", nowIso)
+      .or(`status.eq.pending,and(status.eq.processing,updated_at.lt.${staleIso})`)
       .order("scheduled_at", { ascending: true })
       .limit(10);
     if (dueError) {

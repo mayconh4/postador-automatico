@@ -37,6 +37,8 @@ export interface ExportOptions {
   audioOverlay?: Blob | null;
   /** true = substitui o áudio original; false = mixa. */
   replaceAudio?: boolean;
+  /** Imagem de fundo (quando background.type === 'image'). */
+  backgroundImageBlob?: Blob | null;
   onProgress?: ProgressHandler;
   onLog?: (msg: string) => void;
 }
@@ -128,10 +130,13 @@ function backgroundColor(background?: BackgroundConfig | null): string {
 export async function exportEdit(options: ExportOptions): Promise<Blob> {
   const ffmpeg = await getFFmpeg(options.onLog);
 
+  // Handler nomeado + off() no finally: o FFmpeg é um singleton — sem a
+  // remoção, cada export acumularia um listener que retém os Blobs da closure.
+  const progressHandler = ({ progress }: { progress: number }) => {
+    options.onProgress?.(Math.max(0, Math.min(1, progress)));
+  };
   if (options.onProgress) {
-    ffmpeg.on("progress", ({ progress }) => {
-      options.onProgress!(Math.max(0, Math.min(1, progress)));
-    });
+    ffmpeg.on("progress", progressHandler);
   }
 
   const cleanup: string[] = [];
@@ -185,9 +190,19 @@ export async function exportEdit(options: ExportOptions): Promise<Blob> {
       }
     }
 
-    // ---- 2. Inputs extras (watermark, textos, áudio) ----
+    // ---- 2. Inputs extras (fundo, watermark, textos, áudio) ----
     const args: string[] = ["-i", mainInput];
     let inputIndex = 1;
+
+    const bgType = options.background?.type ?? "color";
+    let bgImageIdx = -1;
+    if (bgType === "image" && options.backgroundImageBlob) {
+      await write("bg.png", await blobToUint8(options.backgroundImageBlob));
+      // -loop 1: a imagem vira stream contínuo; o shortest=1 do overlay encerra
+      // a saída quando o vídeo principal termina.
+      args.push("-loop", "1", "-i", "bg.png");
+      bgImageIdx = inputIndex++;
+    }
 
     let watermarkIdx = -1;
     if (options.watermark?.imageBlob) {
@@ -213,17 +228,34 @@ export async function exportEdit(options: ExportOptions): Promise<Blob> {
 
     // ---- 3. Filtergraph ----
     const chains: string[] = [];
-    let current = "[0:v]";
-
     const eq = eqFilter(options.filters);
-    const scaleChain = `${current}${eq ? eq + "," : ""}scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=decrease[scaled]`;
-    chains.push(scaleChain);
+
+    // Fundo: cor (fonte infinita), blur (derivado do próprio vídeo) ou imagem
+    // (input com -loop 1). Em todos os casos o fundo NÃO pode ter duração
+    // própria menor que o vídeo — o overlay com shortest=1 encerra a saída
+    // quando o stream mais curto acaba (um bg com d=1 truncaria o export a 1s).
+    const useBlurBg = bgType === "blur";
+    const mainSrc = useBlurBg ? "[vmain]" : "[0:v]";
+    if (useBlurBg) {
+      chains.push("[0:v]split=2[vmain][vbgsrc]");
+      chains.push(
+        `[vbgsrc]scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},boxblur=20:2[bg]`
+      );
+    } else if (bgImageIdx >= 0) {
+      chains.push(
+        `[${bgImageIdx}:v]scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H}[bg]`
+      );
+    } else {
+      chains.push(
+        `color=c=${backgroundColor(options.background)}:s=${OUT_W}x${OUT_H}[bg]`
+      );
+    }
 
     chains.push(
-      `color=c=${backgroundColor(options.background)}:s=${OUT_W}x${OUT_H}:d=1[bg]`
+      `${mainSrc}${eq ? eq + "," : ""}scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=decrease[scaled]`
     );
     chains.push(`[bg][scaled]overlay=(W-w)/2:(H-h)/2:shortest=1[framed]`);
-    current = "[framed]";
+    let current = "[framed]";
 
     if (watermarkIdx >= 0 && options.watermark) {
       const wm = options.watermark;
@@ -281,6 +313,7 @@ export async function exportEdit(options: ExportOptions): Promise<Blob> {
     const bytes = data as Uint8Array;
     return new Blob([bytes.slice().buffer], { type: "video/mp4" });
   } finally {
+    ffmpeg.off("progress", progressHandler);
     for (const f of cleanup) {
       try {
         await ffmpeg.deleteFile(f);

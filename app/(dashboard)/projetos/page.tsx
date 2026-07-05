@@ -83,39 +83,29 @@ export default function ProjetosPage() {
   const loadProjects = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
+    // Counts embutidos: 1 requisicao no lugar de 1 + 3 por projeto (N+1)
     const { data, error } = await supabase
       .from("projects")
-      .select("*")
+      .select("*, trend_imports(count), video_assets(count), edits(count)")
       .order("created_at", { ascending: false });
     if (error) {
       toast.error("Erro ao carregar projetos");
       setLoading(false);
       return;
     }
-    const list = (data ?? []) as unknown as Project[];
-
-    const withCounts: ProjectWithCounts[] = await Promise.all(
-      list.map(async (p) => {
-        const [imports, assets, edits] = await Promise.all([
-          supabase
-            .from("trend_imports")
-            .select("*", { count: "exact", head: true })
-            .eq("project_id", p.id),
-          supabase
-            .from("video_assets")
-            .select("*", { count: "exact", head: true })
-            .eq("project_id", p.id),
-          supabase
-            .from("edits")
-            .select("*", { count: "exact", head: true })
-            .eq("project_id", p.id),
-        ]);
-        return {
-          ...p,
-          importCount: imports.count ?? 0,
-          assetCount: assets.count ?? 0,
-          editCount: edits.count ?? 0,
-        };
+    type CountRow = { count: number }[] | null;
+    type ProjectRow = Project & {
+      trend_imports: CountRow;
+      video_assets: CountRow;
+      edits: CountRow;
+    };
+    const list = (data ?? []) as unknown as ProjectRow[];
+    const withCounts: ProjectWithCounts[] = list.map(
+      ({ trend_imports, video_assets, edits, ...p }) => ({
+        ...p,
+        importCount: trend_imports?.[0]?.count ?? 0,
+        assetCount: video_assets?.[0]?.count ?? 0,
+        editCount: edits?.[0]?.count ?? 0,
       })
     );
     setProjects(withCounts);

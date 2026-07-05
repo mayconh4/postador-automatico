@@ -299,6 +299,9 @@ export function EditorShell({ editId }: { editId: string }) {
   }, [editId]);
 
   // autosave com debounce de 3s
+  const pendingSaveRef = useRef(false);
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
   useEffect(() => {
     docRef.current = doc;
     if (!loadedRef.current) return;
@@ -307,11 +310,24 @@ export function EditorShell({ editId }: { editId: string }) {
       return;
     }
     setSaveState("dirty");
+    pendingSaveRef.current = true;
     const timer = setTimeout(() => {
+      pendingSaveRef.current = false;
       void persist();
     }, 3000);
     return () => clearTimeout(timer);
   }, [doc, persist]);
+
+  // Flush no unmount: sem isso, sair da pagina com o debounce pendente
+  // descarta silenciosamente as ultimas alteracoes.
+  useEffect(() => {
+    return () => {
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        void persistRef.current();
+      }
+    };
+  }, []);
 
   // ---- config de desenho sempre atual (lida pelo rAF) ----
   useEffect(() => {
@@ -747,6 +763,14 @@ export function EditorShell({ editId }: { editId: string }) {
           overlayAsset.url
         );
       }
+      // 3b. imagem de fundo (o export renderiza igual ao preview)
+      let backgroundImageBlob: Blob | null = null;
+      if (current.background?.type === "image" && current.background.imageUrl) {
+        backgroundImageBlob = await downloadFile(
+          STORAGE_BUCKETS.images,
+          current.background.imageUrl
+        );
+      }
       setExportProgress(10);
       setExportPhase("rendering");
 
@@ -755,6 +779,7 @@ export function EditorShell({ editId }: { editId: string }) {
         video: videoBlob,
         clips: normalizeOrder(current.clips),
         background: current.background,
+        backgroundImageBlob,
         watermark,
         texts: current.texts,
         filters: current.filters,

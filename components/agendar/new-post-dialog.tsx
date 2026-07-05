@@ -52,12 +52,18 @@ function toLocalInput(date: Date): string {
 }
 
 function defaultScheduleValue(base?: Date | null): string {
+  const now = new Date();
   if (base) {
     const d = new Date(base);
-    d.setHours(new Date().getHours() + 1, 0, 0, 0);
-    return toLocalInput(d);
+    const sameDay = d.toDateString() === now.toDateString();
+    // Dia futuro clicado no calendário: meio-dia. Hoje: próxima hora cheia —
+    // sem setHours(getHours()+1), que às 23h rolaria para o dia seguinte.
+    if (!sameDay) {
+      d.setHours(12, 0, 0, 0);
+      return toLocalInput(d);
+    }
   }
-  return toLocalInput(startOfHour(addHours(new Date(), 1)));
+  return toLocalInput(startOfHour(addHours(now, 1)));
 }
 
 export function NewPostDialog({
@@ -173,6 +179,20 @@ export function NewPostDialog({
     }
 
     const selectedEdit = edits.find((e) => e.id === editId);
+    // Preserva a mídia de posts que não vieram de uma edição (ex.: criados
+    // pelo Batch) — recalcular só do select apagaria o media_path na edição.
+    const mediaPath =
+      selectedEdit?.export_path ?? editingPost?.media_path ?? null;
+
+    // publish-now falha (com 3 retries) posts 'api' sem mídia — bloqueia aqui.
+    if (useApi && !mediaPath) {
+      setSaving(false);
+      toast.error(
+        "Publicação automática precisa de uma mídia: selecione uma edição exportada ou desligue “Publicar automaticamente” para salvar como rascunho manual."
+      );
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       project_id: projectId === NONE ? null : projectId,
@@ -181,16 +201,21 @@ export function NewPostDialog({
       post_type: postType,
       title: title.trim() || null,
       caption: caption.trim() || null,
-      media_path: selectedEdit?.export_path ?? null,
+      media_path: mediaPath,
       scheduled_at: new Date(scheduledAt).toISOString(),
       publish_method: useApi ? "api" : "manual",
     };
 
     let error: { message: string } | null = null;
     if (editingPost) {
+      // Reagendar um post falhado/cancelado o devolve à fila do cron.
+      const revive =
+        editingPost.status === "failed" || editingPost.status === "cancelled"
+          ? { status: "pending", retry_count: 0, error_message: null }
+          : {};
       const res = await supabase
         .from("scheduled_posts")
-        .update(payload)
+        .update({ ...payload, ...revive })
         .eq("id", editingPost.id);
       error = res.error;
     } else {

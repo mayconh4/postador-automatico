@@ -79,36 +79,29 @@ export default function JuridicoPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient();
+    // Counts embutidos: 1 requisição no lugar de 1 + 2 por caso (N+1)
     const { data, error } = await supabase
       .from("legal_cases")
-      .select("*")
+      .select("*, legal_viral_patterns(count), legal_generated_content(count)")
       .order("created_at", { ascending: false });
     if (error) {
       toast.error("Erro ao carregar casos: " + error.message);
       setLoading(false);
       return;
     }
-    const rows = (data ?? []) as unknown as LegalCase[];
-    const withCounts = await Promise.all(
-      rows.map(async (c) => {
-        const [p, g] = await Promise.all([
-          supabase
-            .from("legal_viral_patterns")
-            .select("id", { count: "exact", head: true })
-            .eq("legal_case_id", c.id),
-          supabase
-            .from("legal_generated_content")
-            .select("id", { count: "exact", head: true })
-            .eq("legal_case_id", c.id),
-        ]);
-        return {
-          ...c,
-          patterns_count: p.count ?? 0,
-          contents_count: g.count ?? 0,
-        };
-      })
+    type CountRow = { count: number }[] | null;
+    type CaseRow = LegalCase & {
+      legal_viral_patterns: CountRow;
+      legal_generated_content: CountRow;
+    };
+    const rows = (data ?? []) as unknown as CaseRow[];
+    setCases(
+      rows.map(({ legal_viral_patterns, legal_generated_content, ...c }) => ({
+        ...c,
+        patterns_count: legal_viral_patterns?.[0]?.count ?? 0,
+        contents_count: legal_generated_content?.[0]?.count ?? 0,
+      }))
     );
-    setCases(withCounts);
     setLoading(false);
   }, []);
 
