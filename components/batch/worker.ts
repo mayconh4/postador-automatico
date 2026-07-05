@@ -174,8 +174,13 @@ export async function processBatchJob(
 
       // 2. Exporta (serializado — ver comentário no topo do arquivo)
       let lastDbProgress = 0;
+      let lastUiProgress = -1;
       const handleProgress = (p: number) => {
         const pct = Math.min(99, Math.round(p * 100));
+        // FFmpeg emite varios eventos por segundo - so re-renderiza quando o
+        // percentual inteiro muda, senao a lista de jobs re-renderiza por tick
+        if (pct === lastUiProgress) return;
+        lastUiProgress = pct;
         onItem(item.id, { progress: pct });
         // Throttle: só grava no banco a cada ~10%
         if (pct - lastDbProgress >= 10) {

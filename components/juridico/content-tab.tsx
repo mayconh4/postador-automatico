@@ -239,7 +239,9 @@ export function ContentTab({ legalCase }: { legalCase: LegalCase }) {
           caption,
           scheduled_at: new Date(scheduledAt).toISOString(),
           status: "pending",
-          publish_method: "api",
+          // Sem mídia anexada: entra como publicação manual — o worker do cron
+          // falharia (3 retries) um post 'api' sem media_path.
+          publish_method: "manual",
         })
         .select("id")
         .single();
@@ -480,8 +482,10 @@ export function ContentTab({ legalCase }: { legalCase: LegalCase }) {
           <DialogHeader>
             <DialogTitle>Agendar publicação</DialogTitle>
             <DialogDescription>
-              &quot;{scheduleTarget?.title}&quot; entrará no calendário como post
-              pendente.
+              &quot;{scheduleTarget?.title}&quot; entrará no calendário como
+              publicação manual (roteiro sem vídeo anexado). Para publicar
+              automaticamente, edite o post no calendário e anexe uma edição
+              exportada.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">

@@ -329,23 +329,28 @@ export function JobsTab({
 
       toast.info("Montando o ZIP do lote — isso pode levar alguns minutos...");
       const zip = new JSZip();
-      const usedNames = new Map<string, number>();
+      const usedNames = new Set<string>();
       for (let i = 0; i < completedItems.length; i++) {
         const item = completedItems[i];
         const blob = await downloadFile(
           STORAGE_BUCKETS.batchExports,
           item.export_path!
         );
-        // Nome do arquivo original, garantindo .mp4 e sem duplicatas
+        // Nome do arquivo original, garantindo .mp4 e sem duplicatas.
+        // Loop até nome livre: um sufixo fixo colidiria com um original
+        // já chamado "nome-2" e o JSZip sobrescreveria a entrada.
         const base = sanitizeFilename(
           (item.video_assets?.filename ?? `video-${i + 1}`).replace(
             /\.[^.]+$/,
             ""
           )
         );
-        const count = usedNames.get(base) ?? 0;
-        usedNames.set(base, count + 1);
-        zip.file(count === 0 ? `${base}.mp4` : `${base}-${count + 1}.mp4`, blob);
+        let name = `${base}.mp4`;
+        for (let n = 2; usedNames.has(name); n++) {
+          name = `${base}-${n}.mp4`;
+        }
+        usedNames.add(name);
+        zip.file(name, blob);
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -361,7 +366,6 @@ export function JobsTab({
       if (error) {
         toast.error("ZIP gerado, mas houve erro ao salvar o caminho.");
       } else {
-        patchJob(job.id, { ...({} as JobPatch) });
         setJobs((prev) =>
           prev.map((j) =>
             j.id === job.id ? { ...j, output_zip_path: zipPath } : j
@@ -434,7 +438,10 @@ export function JobsTab({
             : 0;
         const canProcess =
           !isProcessing &&
-          ["pending", "failed", "cancelled"].includes(job.status);
+          (["pending", "failed", "cancelled"].includes(job.status) ||
+            // Lote "completed" com falhas parciais ainda tem itens a refazer
+            job.failed_items > 0 ||
+            job.completed_items < job.total_items);
         const canZip = job.status === "completed" && job.completed_items > 0;
 
         return (

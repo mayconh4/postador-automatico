@@ -30,10 +30,17 @@ function expiresInToIso(expiresIn: unknown): string | null {
   return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
-/** Meta (Instagram/Facebook): troca o code e busca a primeira página do usuário. */
+/**
+ * Meta (Instagram/Facebook): troca o code, alonga o token e resolve a conta
+ * correta para PUBLICAÇÃO:
+ * - facebook  → id da Página + PAGE access token (exigido por /{page}/videos)
+ * - instagram → id da conta IG BUSINESS vinculada à Página + page token
+ *   (o endpoint /{ig-user-id}/media não aceita id de Página nem user token)
+ */
 async function exchangeMeta(
   code: string,
-  redirectUri: string
+  redirectUri: string,
+  platform: "instagram" | "facebook"
 ): Promise<TokenResult> {
   const clientId = process.env.META_APP_ID ?? "";
   const clientSecret = process.env.META_APP_SECRET ?? "";
@@ -58,53 +65,84 @@ async function exchangeMeta(
     throw new Error("Meta não retornou access_token");
   }
 
-  let accountId = "";
-  let accountName: string | null = null;
+  // Token curto → longo (60 dias); page tokens derivados dele não expiram.
+  let userToken = tokenData.access_token;
+  let expiresAt = expiresInToIso(tokenData.expires_in);
   try {
-    const pagesRes = await fetch(
-      `https://graph.facebook.com/v19.0/me/accounts?access_token=${encodeURIComponent(tokenData.access_token)}`
+    const longParams = new URLSearchParams({
+      grant_type: "fb_exchange_token",
+      client_id: clientId,
+      client_secret: clientSecret,
+      fb_exchange_token: userToken,
+    });
+    const longRes = await fetch(
+      `https://graph.facebook.com/v19.0/oauth/access_token?${longParams.toString()}`
     );
-    if (pagesRes.ok) {
-      const pages = (await pagesRes.json()) as {
-        data?: { id?: string; name?: string }[];
+    if (longRes.ok) {
+      const longData = (await longRes.json()) as {
+        access_token?: string;
+        expires_in?: number;
       };
-      const first = pages.data?.[0];
-      if (first?.id) {
-        accountId = first.id;
-        accountName = first.name ?? null;
+      if (longData.access_token) {
+        userToken = longData.access_token;
+        expiresAt = expiresInToIso(longData.expires_in) ?? expiresAt;
       }
     }
   } catch {
-    // segue para o fallback /me
+    // segue com o token curto
   }
 
-  if (!accountId) {
-    try {
-      const meRes = await fetch(
-        `https://graph.facebook.com/v19.0/me?access_token=${encodeURIComponent(tokenData.access_token)}`
-      );
-      if (meRes.ok) {
-        const me = (await meRes.json()) as { id?: string; name?: string };
-        if (me.id) {
-          accountId = me.id;
-          accountName = me.name ?? null;
-        }
-      }
-    } catch {
-      // sem dados de conta — falha abaixo
+  interface MetaPage {
+    id?: string;
+    name?: string;
+    access_token?: string;
+    instagram_business_account?: { id?: string; username?: string };
+  }
+  let pages: MetaPage[] = [];
+  try {
+    const pagesRes = await fetch(
+      `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&access_token=${encodeURIComponent(userToken)}`
+    );
+    if (pagesRes.ok) {
+      const body = (await pagesRes.json()) as { data?: MetaPage[] };
+      pages = body.data ?? [];
     }
+  } catch {
+    // tratado abaixo conforme a plataforma
   }
 
-  if (!accountId) {
-    throw new Error("não foi possível identificar a conta Meta");
+  if (platform === "instagram") {
+    const pageWithIg = pages.find((p) => p.instagram_business_account?.id);
+    if (!pageWithIg) {
+      throw new Error(
+        "nenhuma conta Instagram profissional vinculada às suas Páginas do Facebook — vincule em Configurações do Instagram > Contas conectadas"
+      );
+    }
+    return {
+      accessToken: pageWithIg.access_token ?? userToken,
+      refreshToken: null,
+      expiresAt,
+      accountId: pageWithIg.instagram_business_account!.id!,
+      accountName:
+        pageWithIg.instagram_business_account?.username ??
+        pageWithIg.name ??
+        null,
+    };
   }
 
+  // facebook: precisa de uma Página (com page token) para publicar
+  const page = pages.find((p) => p.id);
+  if (!page?.id) {
+    throw new Error(
+      "nenhuma Página do Facebook encontrada na sua conta — crie uma Página para publicar vídeos"
+    );
+  }
   return {
-    accessToken: tokenData.access_token,
+    accessToken: page.access_token ?? userToken,
     refreshToken: null,
-    expiresAt: expiresInToIso(tokenData.expires_in),
-    accountId,
-    accountName,
+    expiresAt,
+    accountId: page.id,
+    accountName: page.name ?? null,
   };
 }
 
@@ -284,7 +322,11 @@ export async function GET(
     } else if (platform === "tiktok") {
       result = await exchangeTikTok(code, redirectUri);
     } else {
-      result = await exchangeMeta(code, redirectUri);
+      result = await exchangeMeta(
+        code,
+        redirectUri,
+        platform as "instagram" | "facebook"
+      );
     }
   } catch (err) {
     const message =
