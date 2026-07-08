@@ -111,16 +111,16 @@ export function ConnectionsSection() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {PLATFORMS.map((platform) => {
-              const connection =
-                connections.find((c) => c.platform === platform.id) ?? null;
-              const expired = connection ? isExpired(connection) : false;
+              const accounts = connections.filter(
+                (c) => c.platform === platform.id
+              );
               const Icon = PLATFORM_ICONS[platform.id];
               const busy = busyPlatform === platform.id;
 
               return (
                 <div
                   key={platform.id}
-                  className="flex flex-col justify-between gap-4 rounded-lg border p-4"
+                  className="flex flex-col gap-4 rounded-lg border p-4"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3">
@@ -134,23 +134,18 @@ export function ConnectionsSection() {
                       </div>
                       <div>
                         <p className="font-semibold">{platform.label}</p>
-                        {connection ? (
-                          <p className="text-xs text-muted-foreground">
-                            {connection.account_name ?? "Conta conectada"}{" "}
-                            <span className="text-muted-foreground/70">
-                              ({connection.account_id})
-                            </span>
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Nenhuma conta conectada
-                          </p>
-                        )}
+                        <p className="text-xs text-muted-foreground">
+                          {accounts.length === 0
+                            ? "Nenhuma conta conectada"
+                            : accounts.length === 1
+                              ? "1 conta conectada"
+                              : `${accounts.length} contas conectadas`}
+                        </p>
                       </div>
                     </div>
-                    {connection ? (
-                      expired ? (
-                        <Badge variant="warning">Expirado</Badge>
+                    {accounts.length > 0 ? (
+                      accounts.some(isExpired) ? (
+                        <Badge variant="warning">Renovação pendente</Badge>
                       ) : (
                         <Badge variant="success">Conectado</Badge>
                       )
@@ -159,61 +154,71 @@ export function ConnectionsSection() {
                     )}
                   </div>
 
-                  {connection && connection.expires_at && (
-                    <p className="text-xs text-muted-foreground">
-                      {expired ? "Expirou" : "Expira"}{" "}
-                      {formatDistanceToNow(new Date(connection.expires_at), {
-                        addSuffix: true,
-                        locale: ptBR,
+                  {accounts.length > 0 && (
+                    <div className="space-y-2">
+                      {accounts.map((connection) => {
+                        const expired = isExpired(connection);
+                        return (
+                          <div
+                            key={connection.id}
+                            className="flex items-center gap-2 rounded-md border px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium">
+                                {connection.account_name ?? connection.account_id}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {expired
+                                  ? "Expirada — reconecte"
+                                  : connection.expires_at
+                                    ? `Expira ${formatDistanceToNow(
+                                        new Date(connection.expires_at),
+                                        { addSuffix: true, locale: ptBR }
+                                      )}`
+                                    : "Sem expiração informada"}
+                              </p>
+                            </div>
+                            {expired && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => connect(platform.id)}
+                                disabled={busy}
+                                title="Reconectar"
+                              >
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-muted-foreground"
+                              onClick={() => void disconnect(connection)}
+                              disabled={busy}
+                              title="Desconectar esta conta"
+                            >
+                              <Unplug className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        );
                       })}
-                    </p>
+                    </div>
                   )}
 
-                  <div className="flex flex-wrap gap-2">
-                    {connection ? (
-                      <>
-                        {expired && (
-                          <Button
-                            size="sm"
-                            onClick={() => connect(platform.id)}
-                            disabled={busy}
-                          >
-                            {busy ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="mr-2 h-4 w-4" />
-                            )}
-                            Reconectar
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void disconnect(connection)}
-                          disabled={busy}
-                        >
-                          {busy ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <Unplug className="mr-2 h-4 w-4" />
-                          )}
-                          Desconectar
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => connect(platform.id)}
-                        disabled={busy}
-                      >
-                        {busy ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Plug className="mr-2 h-4 w-4" />
-                        )}
-                        Conectar
-                      </Button>
-                    )}
+                  <div>
+                    <Button
+                      size="sm"
+                      variant={accounts.length > 0 ? "outline" : "default"}
+                      onClick={() => connect(platform.id)}
+                      disabled={busy}
+                    >
+                      {busy ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Plug className="mr-2 h-4 w-4" />
+                      )}
+                      {accounts.length > 0 ? "Conectar outra conta" : "Conectar"}
+                    </Button>
                   </div>
                 </div>
               );

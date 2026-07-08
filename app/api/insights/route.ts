@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { extractJson } from "@/lib/ai/json";
 import type { ReferenceInsights } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -109,23 +110,6 @@ function buildMock(req: InsightsRequest): ReferenceInsights {
     tone: "Direto, próximo e didático, com senso de urgência nos ganchos",
     recommendations: pick(recommendations, seed + 1, 5),
   };
-}
-
-function extractJson(text: string): Record<string, unknown> | null {
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  try {
-    return JSON.parse(cleaned) as Record<string, unknown>;
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
 }
 
 function asStringArray(v: unknown): string[] | undefined {

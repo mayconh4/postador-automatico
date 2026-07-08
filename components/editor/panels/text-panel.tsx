@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { TextOverlay } from "@/lib/types";
 import { makeId } from "@/components/editor/editor-utils";
-import { Plus, Trash2, Type } from "lucide-react";
+import { Loader2, Plus, Sparkles, Trash2, Type } from "lucide-react";
 
 function newOverlay(duration: number): TextOverlay {
   return {
@@ -31,10 +31,15 @@ export function TextPanel({
   texts,
   duration,
   onChange,
+  onAutoCaptions,
+  captionsBusy,
 }: {
   texts: TextOverlay[];
   duration: number;
   onChange: (texts: TextOverlay[]) => void;
+  /** Gera legendas automáticas (Whisper) a partir do áudio do vídeo. */
+  onAutoCaptions?: () => void;
+  captionsBusy?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(
     texts[0]?.id ?? null
@@ -75,6 +80,21 @@ export function TextPanel({
           <Plus className="mr-1 h-4 w-4" />
           Adicionar
         </Button>
+      {onAutoCaptions && (
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={onAutoCaptions}
+          disabled={captionsBusy}
+        >
+          {captionsBusy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4" />
+          )}
+          {captionsBusy ? "Transcrevendo…" : "Legendas automáticas (IA)"}
+        </Button>
+      )}
       </div>
 
       {texts.length === 0 ? (

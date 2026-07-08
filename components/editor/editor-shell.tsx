@@ -27,6 +27,8 @@ import { createClient } from "@/lib/supabase/client";
 import { downloadFile, getSignedUrl, uploadFile } from "@/lib/storage";
 import { STATUS_LABELS, STORAGE_BUCKETS } from "@/lib/constants";
 import { exportEdit } from "@/lib/video/export";
+import { extractAudioForTranscription } from "@/lib/video/audio";
+import { segmentsToOverlays, type TranscriptSegment } from "@/lib/video/captions";
 import { formatDuration, slugify } from "@/lib/utils";
 import type {
   Edit,
@@ -170,6 +172,9 @@ export function EditorShell({ editId }: { editId: string }) {
   const timeRef = useRef<HTMLSpanElement>(null);
   const seekingRef = useRef(false);
   const playingRef = useRef(false);
+  // Dirty flag do preview: sem ela o rAF redesenharia o canvas a 60fps mesmo
+  // pausado (com fundo blur isso ocupa 10-40% de um core continuamente).
+  const needsRedrawRef = useRef(true);
   const clipIndexRef = useRef(0);
   const watermarkImgRef = useRef<HTMLImageElement | null>(null);
   const backgroundImgRef = useRef<HTMLImageElement | null>(null);
@@ -270,6 +275,54 @@ export function EditorShell({ editId }: { editId: string }) {
     };
   }, [editId]);
 
+  // ---- legendas automáticas (Whisper) ----
+  const [captionsBusy, setCaptionsBusy] = useState(false);
+
+  const handleAutoCaptions = useCallback(async () => {
+    const asset = videoAssetRef.current;
+    if (!asset) {
+      toast.error("Carregue um vídeo antes de gerar legendas.");
+      return;
+    }
+    setCaptionsBusy(true);
+    try {
+      const signedUrl = await getSignedUrl(assetBucket(asset), asset.url, 3600);
+      const res = await fetch(signedUrl);
+      if (!res.ok) throw new Error("Falha ao baixar o vídeo fonte");
+      const videoBlob = await res.blob();
+
+      toast.info("Extraindo o áudio do vídeo…");
+      const audio = await extractAudioForTranscription(videoBlob);
+
+      const form = new FormData();
+      form.append("file", audio, "audio.mp3");
+      form.append("duration", String(Math.round(duration || 0)));
+
+      const tRes = await fetch("/api/transcribe", { method: "POST", body: form });
+      const data = (await tRes.json().catch(() => null)) as
+        | { segments?: TranscriptSegment[]; source?: string; error?: string }
+        | null;
+      if (!tRes.ok || !data?.segments) {
+        throw new Error(data?.error ?? "Falha na transcrição");
+      }
+
+      const overlays = segmentsToOverlays(data.segments);
+      if (overlays.length === 0) {
+        toast.warning("Nenhuma fala detectada no áudio.");
+        return;
+      }
+      setDoc((prev) => ({ ...prev, texts: [...prev.texts, ...overlays] }));
+      toast.success(
+        `${overlays.length} legendas adicionadas` +
+          (data.source === "mock" ? " (modo demonstração — configure OPENAI_API_KEY)" : "")
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao gerar legendas");
+    } finally {
+      setCaptionsBusy(false);
+    }
+  }, [duration]);
+
   // ---- persistência ----
   const persist = useCallback(async (): Promise<boolean> => {
     const current = docRef.current;
@@ -340,6 +393,7 @@ export function EditorShell({ editId }: { editId: string }) {
       duration,
       pxPerSec,
     };
+    needsRedrawRef.current = true;
   }, [doc, duration, pxPerSec]);
 
   // ---- fonte de vídeo (signed URL) ----
@@ -416,7 +470,7 @@ export function EditorShell({ editId }: { editId: string }) {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
-          if (!cancelled) watermarkImgRef.current = img;
+          if (!cancelled) { watermarkImgRef.current = img; needsRedrawRef.current = true; }
         };
         img.src = url;
       } catch {
@@ -444,7 +498,7 @@ export function EditorShell({ editId }: { editId: string }) {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
-          if (!cancelled) backgroundImgRef.current = img;
+          if (!cancelled) { backgroundImgRef.current = img; needsRedrawRef.current = true; }
         };
         img.src = url;
       } catch {
@@ -496,14 +550,22 @@ export function EditorShell({ editId }: { editId: string }) {
         }
 
         const t = sourceToTimeline(clips, clipIndexRef.current, video.currentTime);
-        drawPreviewFrame(
-          canvas,
-          video,
-          cfg,
-          t,
-          watermarkImgRef.current,
-          backgroundImgRef.current
-        );
+        const shouldDraw =
+          playingRef.current ||
+          needsRedrawRef.current ||
+          seekingRef.current ||
+          !video.paused;
+        if (shouldDraw) {
+          needsRedrawRef.current = false;
+          drawPreviewFrame(
+            canvas,
+            video,
+            cfg,
+            t,
+            watermarkImgRef.current,
+            backgroundImgRef.current
+          );
+        }
 
         // playhead / seek bar / tempo — imperativos, sem estado React
         if (playheadRef.current) {
@@ -993,6 +1055,8 @@ export function EditorShell({ editId }: { editId: string }) {
                     onChange={(texts) =>
                       setDoc((prev) => ({ ...prev, texts }))
                     }
+                    onAutoCaptions={() => void handleAutoCaptions()}
+                    captionsBusy={captionsBusy}
                   />
                 </TabsContent>
                 <TabsContent value="watermark" className="mt-0 pt-1">
@@ -1110,6 +1174,12 @@ export function EditorShell({ editId }: { editId: string }) {
         preload="auto"
         className="hidden"
         onLoadedMetadata={handleLoadedMetadata}
+        onSeeked={() => {
+          needsRedrawRef.current = true;
+        }}
+        onLoadedData={() => {
+          needsRedrawRef.current = true;
+        }}
       />
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={audioRef} crossOrigin="anonymous" preload="auto" className="hidden" />
