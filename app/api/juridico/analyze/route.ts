@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { extractJson } from "@/lib/ai/json";
 import type {
   AnalyzedPattern,
   AnalyzedPatternMetrics,
@@ -285,26 +286,6 @@ function buildMock(area: string, publico: string, caseId: string): AnalyzedPatte
 }
 
 // ===== Parse robusto da resposta da IA =====
-
-function extractJson(text: string): Record<string, unknown> | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates: string[] = [];
-  if (fenced?.[1]) candidates.push(fenced[1]);
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end > start) candidates.push(text.slice(start, end + 1));
-  for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c);
-      if (parsed && typeof parsed === "object") {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // tenta o próximo candidato
-    }
-  }
-  return null;
-}
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";

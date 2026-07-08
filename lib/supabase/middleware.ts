@@ -1,7 +1,15 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/cadastro", "/auth"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/cadastro",
+  "/auth",
+  // Páginas exigidas pelos cadastros de app nas plataformas (Meta/TikTok)
+  "/privacidade",
+  "/termos",
+  "/api/meta/data-deletion",
+];
 
 function isConfigured() {
   return (

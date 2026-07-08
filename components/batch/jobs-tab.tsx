@@ -328,14 +328,28 @@ export function JobsTab({
       }
 
       toast.info("Montando o ZIP do lote — isso pode levar alguns minutos...");
+      // Downloads em paralelo (pool de 4) preservando a ordem dos itens —
+      // serial levaria N x latencia; o pico de memoria nao muda (o JSZip
+      // retem todos os blobs de qualquer forma).
+      const blobs: Blob[] = new Array(completedItems.length);
+      let nextIdx = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(4, completedItems.length) }, async () => {
+          while (nextIdx < completedItems.length) {
+            const i = nextIdx++;
+            blobs[i] = await downloadFile(
+              STORAGE_BUCKETS.batchExports,
+              completedItems[i].export_path!
+            );
+          }
+        })
+      );
+
       const zip = new JSZip();
       const usedNames = new Set<string>();
       for (let i = 0; i < completedItems.length; i++) {
         const item = completedItems[i];
-        const blob = await downloadFile(
-          STORAGE_BUCKETS.batchExports,
-          item.export_path!
-        );
+        const blob = blobs[i];
         // Nome do arquivo original, garantindo .mp4 e sem duplicatas.
         // Loop até nome livre: um sufixo fixo colidiria com um original
         // já chamado "nome-2" e o JSZip sobrescreveria a entrada.

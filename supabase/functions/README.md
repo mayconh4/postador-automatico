@@ -59,8 +59,13 @@ automático (3 tentativas, +5 min entre elas) e histórico em `publications`.
 
 ## Limitações conhecidas
 
-- **TikTok**: Direct Post exige app aprovado no TikTok Developer Portal e
-  domínio da URL de vídeo verificado (`PULL_FROM_URL`).
+- **TikTok**: a publicação usa `FILE_UPLOAD` (a função baixa o vídeo e sobe
+  em chunks) porque `PULL_FROM_URL` exigiria verificar o domínio do Supabase
+  Storage. Enquanto o app não for **auditado** pelo TikTok, a API só permite
+  posts privados — a função consulta `creator_info` e usa o nível mais
+  público permitido automaticamente (force com a env `TIKTOK_PRIVACY_LEVEL`).
+  **Tokens do TikTok expiram em 24h**: agende o cron do `refresh-oauth`
+  (bloco em `supabase/migrations/0007_cron.sql`) ou as conexões morrem em 1 dia.
 - **Instagram**: publicação exige conta profissional (business/creator)
   vinculada a uma página do Facebook; o vídeo precisa estar em URL pública
   (as signed URLs do Storage funcionam).
